@@ -7,4 +7,6 @@ spec:
   promotionPolicies:
     - stageSelector:
         name: dev
-      autoPromotionEnabled: true
+      # pinned: dev held at a specific freight (6.12.0) instead of auto-tracking newest.
+      # set back to true to resume auto-promotion of the newest discovered image.
+      autoPromotionEnabled: false
