@@ -66,43 +66,28 @@ curl -s localhost:9898/version
 Kargo UI (optional): `kubectl -n kargo port-forward svc/kargo-api 8080:8080`,
 open https://localhost:8080, log in as `admin` / `admin`.
 
-## Promote (manual, no Kargo CLI needed)
+## Promote (manual gates for stage and prod)
 
-Promotion is triggered by applying a `Promotion` resource. Grab the freight name, then promote:
+Use the helper:
 
 ```bash
-FREIGHT=$(kubectl get freight -n podinfo -o jsonpath='{.items[0].metadata.name}')
-
-# dev -> stage
-kubectl apply -f - <<EOF
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Promotion
-metadata:
-  generateName: stage-
-  namespace: podinfo
-spec:
-  stage: stage
-  freight: $FREIGHT
-EOF
-
-# stage -> prod (run after stage is healthy)
-kubectl apply -f - <<EOF
-apiVersion: kargo.akuity.io/v1alpha1
-kind: Promotion
-metadata:
-  generateName: prod-
-  namespace: podinfo
-spec:
-  stage: prod
-  freight: $FREIGHT
-EOF
+./promote.sh stage    # dev  -> stage
+./promote.sh prod     # stage -> prod (run after stage is healthy)
 ```
 
-Watch the promotion: `kubectl get promotion -n podinfo -w`.
-After it succeeds, Kargo has pushed a commit; Flux deploys within its 1m interval.
+Watch it: `kubectl get promotion -n podinfo -w`.
+After a promotion succeeds, Kargo has pushed a commit bumping that env's `newTag`;
+Flux deploys the change within its 1m reconcile interval.
 
-(If the Kargo CLI is installed, `kargo promote --project podinfo --stage stage --freight $FREIGHT`
-does the same thing.)
+**Why a helper and not a bare `kubectl apply`?** A manually-created `Promotion` must
+carry its `spec.steps` itself — Kargo only copies a Stage's `promotionTemplate` into
+the Promotion automatically for *auto*-promotions (the controller does it). `promote.sh`
+inlines the Stage's own template steps. The Kargo CLI/UI do this copy for you:
+
+```bash
+# equivalent, if the kargo CLI is installed and logged in:
+kargo promote --project podinfo --stage stage --freight <freight-name>
+```
 
 ## Teardown
 
