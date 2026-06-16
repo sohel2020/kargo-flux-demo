@@ -15,19 +15,19 @@ spec:
             repoURL: https://github.com/sohel2020/kargo-flux-demo.git
             checkout:
               - branch: main
-                path: ./repo
+                path: ./src
         - uses: yaml-update
           config:
-            path: ./repo/apps/demo/dev/helmrelease.yaml
+            path: ./src/apps/demo/dev/helmrelease.yaml
             updates:
               - key: spec.chart.spec.version
                 value: ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}
         - uses: git-commit
           config:
-            path: ./repo
+            path: ./src
             message: 'promote demo dev to chart ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}'
         - uses: git-push
-          config: {path: ./repo}
+          config: {path: ./src}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
@@ -46,19 +46,19 @@ spec:
             repoURL: https://github.com/sohel2020/kargo-flux-demo.git
             checkout:
               - branch: main
-                path: ./repo
+                path: ./src
         - uses: yaml-update
           config:
-            path: ./repo/apps/demo/stage/helmrelease.yaml
+            path: ./src/apps/demo/stage/helmrelease.yaml
             updates:
               - key: spec.chart.spec.version
                 value: ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}
         - uses: git-commit
           config:
-            path: ./repo
+            path: ./src
             message: 'promote demo stage to chart ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}'
         - uses: git-push
-          config: {path: ./repo}
+          config: {path: ./src}
 ---
 apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
@@ -77,16 +77,16 @@ spec:
             repoURL: https://github.com/sohel2020/kargo-flux-demo.git
             checkout:
               - branch: main
-                path: ./repo
+                path: ./src
         - uses: yaml-update
           config:
-            path: ./repo/apps/demo/prod/helmrelease.yaml
+            path: ./src/apps/demo/prod/helmrelease.yaml
             updates:
               - key: spec.chart.spec.version
                 value: ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}
         - uses: git-commit
           config:
-            path: ./repo
+            path: ./src
             message: 'promote demo prod to chart ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}'
         - uses: git-push
-          config: {path: ./repo}
+          config: {path: ./src}
