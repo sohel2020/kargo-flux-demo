@@ -9,3 +9,7 @@ metadata: {name: demo-stage}
 apiVersion: v1
 kind: Namespace
 metadata: {name: demo-prod}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: demo}
