@@ -1,0 +1,13 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: demo
+  namespace: flux-system
+spec:
+  type: oci
+  interval: 1m
+  # IMPORTANT: update this URL after running ./push-chart.sh
+  # The script prints the OCI ref -- use everything before "/demo"
+  # Example: if script prints oci://ttl.sh/demo-a106494c/demo:0.1.0
+  #          then url should be oci://ttl.sh/demo-a106494c
+  url: oci://ttl.sh/demo-65250222

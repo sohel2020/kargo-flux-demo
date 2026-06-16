@@ -2,10 +2,10 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: dev
-  namespace: podinfo
+  namespace: demo
 spec:
   requestedFreight:
-    - origin: {kind: Warehouse, name: podinfo}
+    - origin: {kind: Warehouse, name: demo}
       sources: {direct: true}
   promotionTemplate:
     spec:
@@ -18,14 +18,14 @@ spec:
                 path: ./repo
         - uses: yaml-update
           config:
-            path: ./repo/apps/podinfo/dev/kustomization.yaml
+            path: ./repo/apps/demo/dev/helmrelease.yaml
             updates:
-              - key: images.0.newTag
-                value: ${{ imageFrom("ghcr.io/stefanprodan/podinfo").Tag }}
+              - key: spec.chart.spec.version
+                value: ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}
         - uses: git-commit
           config:
             path: ./repo
-            message: 'promote dev to ${{ imageFrom("ghcr.io/stefanprodan/podinfo").Tag }}'
+            message: 'promote demo dev to chart ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}'
         - uses: git-push
           config: {path: ./repo}
 ---
@@ -33,10 +33,10 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: stage
-  namespace: podinfo
+  namespace: demo
 spec:
   requestedFreight:
-    - origin: {kind: Warehouse, name: podinfo}
+    - origin: {kind: Warehouse, name: demo}
       sources: {stages: [dev]}
   promotionTemplate:
     spec:
@@ -49,14 +49,14 @@ spec:
                 path: ./repo
         - uses: yaml-update
           config:
-            path: ./repo/apps/podinfo/stage/kustomization.yaml
+            path: ./repo/apps/demo/stage/helmrelease.yaml
             updates:
-              - key: images.0.newTag
-                value: ${{ imageFrom("ghcr.io/stefanprodan/podinfo").Tag }}
+              - key: spec.chart.spec.version
+                value: ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}
         - uses: git-commit
           config:
             path: ./repo
-            message: 'promote stage to ${{ imageFrom("ghcr.io/stefanprodan/podinfo").Tag }}'
+            message: 'promote demo stage to chart ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}'
         - uses: git-push
           config: {path: ./repo}
 ---
@@ -64,10 +64,10 @@ apiVersion: kargo.akuity.io/v1alpha1
 kind: Stage
 metadata:
   name: prod
-  namespace: podinfo
+  namespace: demo
 spec:
   requestedFreight:
-    - origin: {kind: Warehouse, name: podinfo}
+    - origin: {kind: Warehouse, name: demo}
       sources: {stages: [stage]}
   promotionTemplate:
     spec:
@@ -80,13 +80,13 @@ spec:
                 path: ./repo
         - uses: yaml-update
           config:
-            path: ./repo/apps/podinfo/prod/kustomization.yaml
+            path: ./repo/apps/demo/prod/helmrelease.yaml
             updates:
-              - key: images.0.newTag
-                value: ${{ imageFrom("ghcr.io/stefanprodan/podinfo").Tag }}
+              - key: spec.chart.spec.version
+                value: ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}
         - uses: git-commit
           config:
             path: ./repo
-            message: 'promote prod to ${{ imageFrom("ghcr.io/stefanprodan/podinfo").Tag }}'
+            message: 'promote demo prod to chart ${{ chartFrom("oci://ttl.sh/demo-65250222/demo").Version }}'
         - uses: git-push
           config: {path: ./repo}

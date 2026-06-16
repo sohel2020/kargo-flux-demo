@@ -1,3 +1,5 @@
 # never commit real creds
 kargo/credentials.yaml
 *.tmp
+kargo-demo/credentials.yaml
+.chart-registry

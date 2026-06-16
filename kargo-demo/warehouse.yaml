@@ -1,0 +1,15 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Warehouse
+metadata:
+  name: demo
+  namespace: demo
+spec:
+  subscriptions:
+    - chart:
+        # IMPORTANT: update after running ./push-chart.sh
+        # Use the full OCI path including chart name
+        # Example: if script prints oci://ttl.sh/demo-a106494c/demo:0.1.0
+        #          then repoURL = oci://ttl.sh/demo-a106494c/demo
+        repoURL: oci://ttl.sh/demo-65250222/demo
+        semverConstraint: ">=0.1.0"
+        discoveryLimit: 10
