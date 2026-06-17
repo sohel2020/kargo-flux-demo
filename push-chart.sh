@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHART_DIR="$SCRIPT_DIR/charts/demo"
-VERSION="${1:-0.1.0}"
+VERSION="${1:-2.0.0}"
 REGISTRY_FILE="$SCRIPT_DIR/.chart-registry"
 
 # Reuse registry path across runs so all versions land in the same OCI repo.
@@ -83,7 +83,7 @@ echo "============================================"
 echo "  KARGO UI"
 echo "============================================"
 echo ""
-echo "  kubectl -n kargo port-forward svc/kargo-api 8080:8080"
+echo "  kubectl -n kargo port-forward svc/kargo-api 8080:443"
 echo ""
 echo "  Open:     https://localhost:8080"
 echo "  Username: admin"
