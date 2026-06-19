@@ -16,11 +16,11 @@ helm upgrade --install cert-manager jetstack/cert-manager \
   --namespace cert-manager --create-namespace \
   --set crds.enabled=true --wait
 
-echo "==> Flux bootstrap (needs GITHUB_TOKEN with repo scope)"
-: "${GITHUB_TOKEN:?set GITHUB_TOKEN, e.g. export GITHUB_TOKEN=\$(gh auth token)}"
-flux bootstrap github \
-  --owner="$OWNER" --repository="$REPO" \
-  --path=clusters/local --branch=main --personal --token-auth
+#echo "==> Flux bootstrap (needs GITHUB_TOKEN with repo scope)"
+#: "${GITHUB_TOKEN:?set GITHUB_TOKEN, e.g. export GITHUB_TOKEN=\$(gh auth token)}"
+#flux bootstrap github \
+#  --owner="$OWNER" --repository="$REPO" \
+#  --path=clusters/local --branch=main --personal --token-auth
 
 echo "==> Kargo via Helm (v$KARGO_VERSION)"
 PW_HASH=$(htpasswd -bnBC 10 "" admin | tr -d ':\n')
