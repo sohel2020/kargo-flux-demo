@@ -1,0 +1,763 @@
+global:
+  ingressDomain: ""
+  managementDomain: ""
+  tenant: ""
+
+# ReferenceGrant allowing Envoy Gateway EnvoyProxy resources in gateway
+# namespaces to reference the Alloy receiver Service as a tracing backend.
+tracingReferenceGrant:
+  enabled: false
+  serviceName: alloy-alloy-alloy-receiver
+  fromNamespaces:
+    - gateway-public
+    - gateway-external
+    - gateway-internal
+    - gateway-ai
+
+# Optional: create a ConfigMap in a given namespace with OTLP receiver endpoints
+# for applications to use (e.g. envFrom).
+otelEndpointsConfigMap:
+  enabled: true
+  httpPort: 4318
+  grpcPort: 4317
+  receiverHost: ""
+  namespace: "" # required when enabled, e.g. platform in hub and applications in tenants
+  # optional overrides if ports differ
+  # httpPort: 4318
+  # grpcPort: 4317
+
+# Flux controller PodMonitor + KSM customResourceState (gotk_resource_info). See files/flux-custom-resource-state.yaml.
+fluxMonitoring:
+  enabled: true
+
+# Langfuse trace collector S3 export. Disabled by default; enabled per-tenant via
+# the tenant flux-global-values (rendered by terraform when trace_collector.enabled).
+# When enabled it:
+#   - syncs the STACKIT bucket credentials from the tenant Vault into the alloy
+#     namespace (the ExternalSecret below), and
+#   - the tenant flux-global-values adds the "traces-s3" destination to the
+#     applicationObservability destination filter and the awss3 exporter pipeline
+#     (k8s-monitoring.alloy-receiver.extraConfig + alloy.stabilityLevel).
+tracesS3:
+  enabled: false
+  # Vault secret (written by terraform at <tenant>/secrets/alloy/traces-bucket) and
+  # the store that reads the tenant's own Vault namespace.
+  vaultSecretPath: alloy/traces-bucket
+  secretStoreRef:
+    name: tenant-cluster-secret-store
+    kind: ClusterSecretStore
+
+k8s-monitoring:
+  crds:
+    deploy: true
+
+  cluster:
+    # Overridden at deploy time via flux-global-values configmap
+    name: "placeholder"
+  destinations:
+    # Mimir for metrics
+    - name: shared-mimir-metrics
+      type: prometheus
+      urlFrom: 'string.format("https://mimir-internal.%s/api/v1/push", sys.env("MANAGEMENT_DOMAIN"))'
+      extraLabelsFrom:
+        deployment_environment: sys.env("CLUSTER_NAME")
+      tenantIdFrom: sys.env("CLUSTER_NAME")
+
+    # Loki for logs
+    - name: shared-loki-logs
+      type: loki
+      urlFrom: 'string.format("https://loki-internal.%s/loki/api/v1/push", sys.env("MANAGEMENT_DOMAIN"))'
+      extraLabelsFrom:
+        deployment_environment: sys.env("CLUSTER_NAME")
+      tenantIdFrom: sys.env("CLUSTER_NAME")
+
+    # Tempo for traces (using OTLP)
+    - name: shared-tempo-traces
+      type: otlp
+      urlFrom: 'string.format("https://tempo-gateway-internal.%s", sys.env("MANAGEMENT_DOMAIN"))'
+      protocol: http
+      tenantIdFrom: sys.env("CLUSTER_NAME")
+      traces:
+        enabled: true
+      logs:
+        enabled: false
+      metrics:
+        enabled: false
+
+    # Langrouter for traces (routes to Langfuse per project)
+    # Set LANGROUTER_AUTHORIZATION environment variable
+    - name: langfuse-traces
+      type: otlp
+      protocol: grpc
+      urlFrom: 'string.format("langrouter.%s:443", sys.env("MANAGEMENT_DOMAIN"))'
+      traces:
+        enabled: true
+      logs:
+        enabled: false
+      metrics:
+        enabled: false
+      extraHeadersFrom:
+        Authorization: sys.env("LANGROUTER_AUTHORIZATION")
+
+    # Langfuse trace collector — in-process loopback that the alloy-receiver
+    # awss3 exporter (defined in extraConfig) listens on. Only routed to on
+    # tenant clusters where trace_collector is enabled: the destination filter
+    # in applicationObservability.destinations (below) excludes it by default,
+    # and the tenant flux-global-values adds it back in. Defined here so the
+    # destination is resolvable; its exporter component only renders where the
+    # filter includes it, so the hub never forwards spans here.
+    - name: traces-s3
+      type: otlp
+      protocol: grpc
+      url: "http://localhost:4319"
+      tls:
+        insecure: true
+      traces:
+        enabled: true
+      logs:
+        enabled: false
+      metrics:
+        enabled: false
+
+  alloy-operator:
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+
+  clusterMetrics:
+    enabled: true
+
+    # not necessary, as it's used to collect energy metrics on bare metal
+    kepler:
+      enabled: false
+
+    opencost:
+      enabled: false
+
+    node-exporter:
+      enabled: true
+      containerSecurityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      priorityClassName: "system-cluster-critical"
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 200Mi
+      metricsTuning:
+        includeMetrics:
+          - node_disk_io_time_seconds_total
+          - node_disk_io_time_weighted_seconds_total
+          - node_uname_info
+
+        # Drop unwanted metrics for node-exporter
+        excludeMetrics:
+          - node_cpu_frequency_max_hertz
+          - node_cpu_frequency_min_hertz
+          - node_cpu_scaling_frequency_hertz
+          - node_cpu_scaling_frequency_max_hertz
+          - node_cpu_scaling_frequency_min_hertz
+          - node_cpu_scaling_governor
+      extraMetricProcessingRules: |-
+        // Drop pod label
+        rule {
+          action = "labeldrop"
+          regex  = "pod"
+        }
+
+    windows-exporter:
+      deploy: false
+
+    kube-state-metrics:
+      enabled: true
+      priorityClassName: "system-cluster-critical"
+      metricLabelsAllowlist:
+        - pods=[app.oam.dev/name,app.oam.dev/component]
+        - deployments=[app.oam.dev/name,app.oam.dev/component]
+        - horizontalpodautoscalers=[app.oam.dev/name,app.oam.dev/component]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 200Mi
+        limits:
+          cpu: 100m
+          memory: 1Gi
+      metricsTuning:
+        # Drop unwanted metrics for kube-state-metrics
+        excludeMetrics:
+          - kube_job_info
+          - kube_job_owner
+          - kube_job_spec_parallelism
+          - kube_job_created
+          - kube_job_spec_completions
+          - kube_pod_status_reason
+          - kube_replicaset_metadata_generation
+          - kube_replicaset_status_observed_generation
+          - kube_replicaset_spec_replicas
+          - kube_replicaset_created
+          - kube_replicaset_status_fully_labeled_replicas
+          - kubelet_pod_worker_duration_seconds_bucket
+        # adding missing metrics for kube-state-metrics
+        includeMetrics:
+          - kube_deployment_status_replicas_ready
+          - kube_deployment_spec_replicas
+          - kube_deployment_created
+          - kube_pod_container_state_started
+          - kube_pod_labels
+          - kube_deployment_labels
+          - kube_horizontalpodautoscaler_labels
+          - gotk_resource_info
+      extraMetricProcessingRules: |-
+        // Drop uid, job_name label
+        // The job_name label is automatically included in kube_job_* metrics, which increases cardinality
+        rule {
+          action = "labeldrop"
+          regex  = "uid|job_name"
+        }
+      rbac:
+        extraRules:
+          - apiGroups:
+              - source.toolkit.fluxcd.io
+              - kustomize.toolkit.fluxcd.io
+              - helm.toolkit.fluxcd.io
+            resources:
+              - gitrepositories
+              - ocirepositories
+              - helmrepositories
+              - kustomizations
+              - helmreleases
+            verbs: ["list", "watch"]
+          - apiGroups:
+              - infra.contrib.fluxcd.io
+            resources:
+              - terraforms
+            verbs: ["list", "watch"]
+      customResourceState:
+        enabled: true
+        config:
+          spec:
+            resources:
+              - groupVersionKind:
+                  group: kustomize.toolkit.fluxcd.io
+                  version: v1
+                  kind: Kustomization
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: The current state of a Flux Kustomization resource.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                          exported_namespace: [metadata, namespace]
+                          ready: [status, conditions, "[type=Ready]", status]
+                          suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: helm.toolkit.fluxcd.io
+                  version: v2
+                  kind: HelmRelease
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: The current state of a Flux HelmRelease resource.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                          exported_namespace: [metadata, namespace]
+                          ready: [status, conditions, "[type=Ready]", status]
+                          suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: source.toolkit.fluxcd.io
+                  version: v1
+                  kind: GitRepository
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: The current state of a Flux GitRepository resource.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                          exported_namespace: [metadata, namespace]
+                          ready: [status, conditions, "[type=Ready]", status]
+                          suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: source.toolkit.fluxcd.io
+                  version: v1
+                  kind: OCIRepository
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: The current state of a Flux OCIRepository resource.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                          exported_namespace: [metadata, namespace]
+                          ready: [status, conditions, "[type=Ready]", status]
+                          suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: source.toolkit.fluxcd.io
+                  version: v1
+                  kind: HelmRepository
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: The current state of a Flux HelmRepository resource.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                          exported_namespace: [metadata, namespace]
+                          ready: [status, conditions, "[type=Ready]", status]
+                          suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: infra.contrib.fluxcd.io
+                  version: v1alpha2
+                  kind: Terraform
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: The current state of a Flux Terraform resource.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                          exported_namespace: [metadata, namespace]
+                          ready: [status, conditions, "[type=Ready]", status]
+                          reason: [status, conditions, "[type=Ready]", reason]
+
+  annotationAutodiscovery:
+    enabled: true
+
+  prometheusOperatorObjects:
+    enabled: true
+    crds:
+      deploy: true
+
+  clusterEvents:
+    enabled: true
+
+  podLogs:
+    enabled: true
+
+    labels:
+      application_name: app.oam.dev/name
+
+    labelsToKeep:
+      # Primary filtering labels (used in queries) - minimal for performance
+      - job # Service filtering & exclusions
+      - pod # Pod-specific queries
+      - instance # Service instance identification
+      - namespace # Namespace filtering
+      - service.instance.id # Service instance identification
+      - service.name # App Observability primary identifier
+      - service.component # Service component
+      - service.namespace # Namespace filtering
+      - service.version # Service version identification
+      - level # Log level filtering
+
+      # Container context
+      - container # Container name
+      - container.image.name # Container image name
+      - container.image.tag # Container image tag
+      - application_name # Custom label for Custom Application identifier
+
+    # Structured metadata for line format and detailed context (JSON fields)
+    structuredMetadata:
+      k8s.node.name: k8s.node.name
+      k8s.pod.name: k8s.pod.name
+      k8s.deployment.name: k8s.deployment.name
+      k8s.statefulset.name: k8s.statefulset.name
+      k8s.replicaset.name: k8s.replicaset.name
+      k8s.job.name: k8s.job.name
+      k8s.cronjob.name: k8s.cronjob.name
+      k8s.daemonset.name: k8s.daemonset.name
+      k8s.namespace.name: k8s.namespace.name
+      k8s.container.name: k8s.container.name
+
+  applicationObservability:
+    enabled: true
+    # Which destinations receive application telemetry. The filter is type-aware
+    # (metrics→mimir, logs→loki, traces→tempo+langfuse). The "traces-s3"
+    # destination is intentionally excluded here so it is never wired on the hub.
+    # Tenant clusters with the trace collector enabled override this list (via the
+    # alloy-trace-collector-values ConfigMap) to add "traces-s3", which renders
+    # its loopback exporter and the awss3 pipeline.
+    destinations:
+      - shared-mimir-metrics
+      - shared-loki-logs
+      - shared-tempo-traces
+      - langfuse-traces
+    receivers:
+      otlp:
+        grpc:
+          enabled: true
+          port: 4317
+        http:
+          enabled: true
+          port: 4318
+      zipkin:
+        enabled: true
+        port: 9411
+
+    processors:
+      k8sattributes:
+        metadata:
+          - k8s.namespace.name
+          - k8s.pod.name
+          - k8s.deployment.name
+          - k8s.container.name
+          - k8s.statefulset.name
+          - k8s.replicaset.name
+          - k8s.daemonset.name
+          - k8s.cronjob.name
+          - k8s.job.name
+          - k8s.node.name
+          - container.image.name
+          - container.image.tag
+      resourceDetection:
+        kubernetesNode:
+          enabled: true
+          nodeFromEnvVar: "NODE_NAME"
+        env:
+          enabled: true
+        override: true
+      transform:
+        errorMode: ignore
+        enabled: true
+    traces:
+      transforms:
+        resource:
+          - 'set(attributes["service.component"], attributes["app.kubernetes.io/component"])'
+          - 'set(attributes["service.namespace"], attributes["k8s.namespace.name"])'
+          - 'set(attributes["service.name"], attributes["k8s.deployment.name"])'
+          - 'set(attributes["service.instance.id"], attributes["k8s.pod.name"])'
+          - 'set(attributes["instance"], attributes["k8s.pod.name"])'
+          - 'delete_key(attributes, "k8s.pod.ip")'
+          - 'delete_key(attributes, "k8s.pod.uid")'
+          - 'delete_key(attributes, "environment")'
+          - 'delete_key(attributes, "service.environment")'
+          - 'delete_key(attributes, "k8s.node.uid")'
+    metrics:
+      transforms:
+        resource:
+          - 'set(attributes["service.instance.id"], attributes["k8s.pod.name"])'
+          - 'delete_key(attributes, "k8s.pod.ip")'
+          - 'delete_key(attributes, "k8s.pod.uid")'
+          - 'delete_key(attributes, "k8s.node.uid")'
+
+  autoInstrumentation:
+    enabled: false
+
+  alloy-metrics:
+    enabled: true
+    extraConfig: |
+      mimir.rules.kubernetes "mimir_rules" {
+        // Mimir rules endpoint
+        address = string.format("https://ruler-internal.%s", sys.env("MANAGEMENT_DOMAIN"))
+        external_labels = {"cluster" = sys.env("CLUSTER_NAME")}
+        tenant_id = sys.env("CLUSTER_NAME")
+      }
+    configReloader:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+    controller:
+      priorityClassName: "system-cluster-critical"
+    alloy:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          add: []
+          drop: [ALL]
+        runAsNonRoot: true
+        runAsUser: 473
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests:
+          cpu: 50m
+          memory: 1Gi
+        limits:
+          cpu: 200m
+          memory: 1.5Gi
+      extraEnv:
+        - name: CLUSTER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: CLUSTER_NAME
+        - name: MANAGEMENT_DOMAIN
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: MANAGEMENT_DOMAIN
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+
+  alloy-singleton:
+    enabled: true
+    configReloader:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+    controller:
+      priorityClassName: "system-cluster-critical"
+    alloy:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          add: []
+          drop: [ALL]
+        runAsNonRoot: true
+        runAsUser: 473
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests:
+          cpu: 30m
+          memory: 256Mi
+        limits:
+          cpu: 100m
+          memory: 500Mi
+      extraEnv:
+        - name: CLUSTER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: CLUSTER_NAME
+        - name: MANAGEMENT_DOMAIN
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: MANAGEMENT_DOMAIN
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+
+  alloy-logs:
+    enabled: true
+    configReloader:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+    controller:
+      priorityClassName: "system-cluster-critical"
+    alloy:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          add: []
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests:
+          cpu: 30m
+          memory: 200Mi
+        limits:
+          cpu: 100m
+          memory: 500Mi
+      extraEnv:
+        - name: CLUSTER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: CLUSTER_NAME
+        - name: MANAGEMENT_DOMAIN
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: MANAGEMENT_DOMAIN
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+
+  alloy-receiver:
+    enabled: true
+    configReloader:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+    controller:
+      priorityClassName: "system-cluster-critical"
+    alloy:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          add: []
+          drop: [ALL]
+        runAsNonRoot: true
+        runAsUser: 473
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests:
+          cpu: 15m
+          memory: 200Mi
+        limits:
+          cpu: 100m
+          memory: 500Mi
+      extraPorts:
+        - name: grpc-otlp
+          port: 4317
+          targetPort: 4317
+          protocol: TCP
+        - name: http-otlp
+          port: 4318
+          targetPort: 4318
+          protocol: TCP
+        - name: zipkin
+          port: 9411
+          targetPort: 9411
+          protocol: TCP
+      extraEnv:
+        - name: CLUSTER_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: CLUSTER_NAME
+        - name: MANAGEMENT_DOMAIN
+          valueFrom:
+            configMapKeyRef:
+              name: alloy-extra-config
+              key: MANAGEMENT_DOMAIN
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: LANGROUTER_AUTHORIZATION
+          valueFrom:
+            secretKeyRef:
+              name: langfuse-alloy-credentials
+              key: LANGROUTER_AUTHORIZATION
+              optional: true
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: deployment.environment=$(CLUSTER_NAME),k8s.cluster.name=$(CLUSTER_NAME)
+        # Langfuse trace collector S3 export credentials (synced from Vault by the
+        # traces-bucket-credentials ExternalSecret on tenant clusters). Optional so
+        # the hub and trace-collector-disabled tenants render with empty values; the
+        # awss3 exporter that consumes them is only configured (via extraConfig) where
+        # the trace collector is enabled.
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: traces-bucket-credentials
+              key: AWS_ACCESS_KEY_ID
+              optional: true
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: traces-bucket-credentials
+              key: AWS_SECRET_ACCESS_KEY
+              optional: true
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: traces-bucket-credentials
+              key: AWS_REGION
+              optional: true
+        - name: TRACES_S3_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: traces-bucket-credentials
+              key: BUCKET_NAME
+              optional: true
+        - name: TRACES_S3_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: traces-bucket-credentials
+              key: AWS_ENDPOINT_URL
+              optional: true
+        # aws-sdk-go-v2 (used by the awss3 exporter) defaults to adding a CRC32
+        # integrity trailer on PutObject (aws-chunked / STREAMING-UNSIGNED-PAYLOAD-
+        # TRAILER). STACKIT object storage (Ceph RGW) does not support that trailer
+        # signing and rejects the request with 403 SignatureDoesNotMatch, silently
+        # dropping every span. Forcing checksums to "when_required" disables the
+        # trailer so uploads are signed in a way STACKIT accepts. Harmless on the hub
+        # and trace-collector-disabled tenants where the awss3 exporter isn't rendered.
+        - name: AWS_REQUEST_CHECKSUM_CALCULATION
+          value: when_required
+        - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+          value: when_required

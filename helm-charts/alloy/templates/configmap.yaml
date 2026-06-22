@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-extra-config
+  namespace: {{ .Release.Namespace }}
+data:
+  CLUSTER_NAME: {{ .Values.global.tenant | quote }}
+  MANAGEMENT_DOMAIN: {{ .Values.global.managementDomain | quote }}

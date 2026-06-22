@@ -1,0 +1,16 @@
+{{- if .Values.otelEndpointsConfigMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-endpoints
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "applications,platform,eval-platform"
+# In platform-configmap.yaml, compute the receiver service host (no hardcoded "alloy-alloy-alloy-receiver")
+{{- $receiverHost := .Values.otelEndpointsConfigMap.receiverHost | default (printf "%s-alloy-receiver.%s" .Release.Name .Release.Namespace) }}
+data:
+  http: "http://{{ $receiverHost }}:{{ .Values.otelEndpointsConfigMap.httpPort }}"
+  grpc: "http://{{ $receiverHost }}:{{ .Values.otelEndpointsConfigMap.grpcPort }}"
+{{- end }}
